@@ -10,7 +10,7 @@ use std::sync::Arc;
 use inplace_box::InplaceBox;
 
 #[test]
-fn test_fn_once() {
+fn test_method() {
     trait MyTrait {
         fn method(&self) -> i32;
     }
@@ -62,4 +62,35 @@ fn test_drop() {
         let _f = InplaceBox::<dyn MyTrait>::new(v);
     }
     assert_eq!(2, drop_count.load(Ordering::Relaxed), "drop is called");
+}
+
+/// Put various types into one vec
+#[test]
+fn test_erase_type() {
+    trait MyTrait {
+        fn method(&self) -> i32;
+    }
+
+    struct MyStruct1(i32);
+    impl MyTrait for MyStruct1 {
+        fn method(&self) -> i32 {
+            self.0
+        }
+    }
+
+    struct MyStruct2(i32);
+    impl MyTrait for MyStruct2 {
+        fn method(&self) -> i32 {
+            self.0 * 2
+        }
+    }
+
+    let arr: Vec<InplaceBox<dyn MyTrait, 4>> = vec![
+        InplaceBox::<dyn MyTrait>::new(MyStruct1(1)),
+        InplaceBox::<dyn MyTrait>::new(MyStruct2(2)),
+    ];
+
+    let result = arr.into_iter().map(|b| b.method()).collect::<Vec<_>>();
+
+    assert_eq!(result, vec![1, 4]);
 }
