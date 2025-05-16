@@ -8,6 +8,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use inplace_box::InplaceBox;
+use inplace_box::InplaceFnOnce;
 
 #[test]
 fn test_method() {
@@ -15,15 +16,22 @@ fn test_method() {
         fn method(&self) -> i32;
     }
 
-    struct MyStruct(i32);
+    static_assertions::assert_eq_size!(InplaceBox<dyn MyTrait, 8>, [usize; 2]);
+    static_assertions::assert_eq_size!(
+        Option<InplaceBox<dyn MyTrait, 8>>,
+        InplaceBox<dyn MyTrait, 8>
+    );
+
+    struct MyStruct(i32, Arc<()>);
 
     impl MyTrait for MyStruct {
         fn method(&self) -> i32 {
+            let _ = self.1.clone();
             self.0
         }
     }
 
-    let b = InplaceBox::<dyn MyTrait>::new(MyStruct(42));
+    let b = InplaceBox::<dyn MyTrait, 16>::new(MyStruct(42, Arc::new(())));
     assert_eq!(b.method(), 42);
 }
 
@@ -51,7 +59,7 @@ fn test_drop() {
     assert_eq!(0, drop_count.load(Ordering::Relaxed));
 
     {
-        let _f = InplaceBox::<dyn MyTrait>::new(v);
+        let _f = InplaceBox::<dyn MyTrait, 8>::new(v);
     }
     assert_eq!(1, drop_count.load(Ordering::Relaxed), "drop is called");
 
@@ -59,7 +67,7 @@ fn test_drop() {
         drop_count: drop_count.clone(),
     };
     {
-        let _f = InplaceBox::<dyn MyTrait>::new(v);
+        let _f = InplaceBox::<dyn MyTrait, 8>::new(v);
     }
     assert_eq!(2, drop_count.load(Ordering::Relaxed), "drop is called");
 }
@@ -85,12 +93,143 @@ fn test_erase_type() {
         }
     }
 
-    let arr: Vec<InplaceBox<dyn MyTrait, 4>> = vec![
-        InplaceBox::<dyn MyTrait>::new(MyStruct1(1)),
-        InplaceBox::<dyn MyTrait>::new(MyStruct2(2)),
-    ];
+    let arr: Vec<InplaceBox<dyn MyTrait, 4>> =
+        vec![InplaceBox::new(MyStruct1(1)), InplaceBox::new(MyStruct2(2))];
 
     let result = arr.into_iter().map(|b| b.method()).collect::<Vec<_>>();
 
     assert_eq!(result, vec![1, 4]);
+}
+
+#[test]
+fn fn_once() {
+    let mut counter = 1;
+    let adder: InplaceBox<dyn InplaceFnOnce<(usize,), Output = usize>, 32> =
+        InplaceBox::new(|count| {
+            let res = counter;
+            counter = res + count;
+            res
+        });
+    // call the function once
+    let prev_value = adder(4);
+    // previous count was 1
+    assert_eq!(prev_value, 1);
+    // we added 4, so now it's 5
+    assert_eq!(5, counter);
+
+    // let prev_value2 = adder(1); -- impossible - `FnOnce` call consumes
+    // the box
+}
+
+#[test]
+fn fn_once_drop_or_call() {
+    struct Guard<'a>(&'a mut bool);
+    impl Drop for Guard<'_> {
+        fn drop(&mut self) {
+            *self.0 = true;
+        }
+    }
+
+    // first part - ensure that the closure is dropped, if the `FnOnce` is
+    // not called
+    let mut called = false;
+    let mut dropped = false;
+    {
+        let called = &mut called;
+        let guard = Guard(&mut dropped);
+        let b: InplaceBox<dyn FnOnce(), 32> = InplaceBox::new(move || {
+            *called = true;
+            std::mem::forget(guard);
+        });
+
+        drop(b); // drop w/o calling
+    }
+    assert!(!called);
+    assert!(dropped);
+
+    // second part - ensure that the closure is not dropped twice, the
+    // `FnOnce` call via `InplaceBox` drops it
+    called = false;
+    dropped = false;
+    {
+        let called = &mut called;
+        let guard = Guard(&mut dropped);
+        let b: InplaceBox<dyn InplaceFnOnce<(), Output = ()>, 32> =
+            InplaceBox::new(move || {
+                *called = true;
+                std::mem::forget(guard);
+            });
+
+        b(); // call it now
+    }
+    assert!(called);
+    assert!(!dropped);
+}
+
+#[test]
+#[cfg(not(miri))] // `miri` reports the error, since we intentionally cause an UB
+fn unchecked() {
+    trait MyTrait {
+        fn method(&self) -> i32;
+    }
+
+    impl MyTrait for i32 {
+        fn method(&self) -> i32 {
+            *self
+        }
+    }
+
+    // SAFETY: This is intentionally unsafe and broken, but we do have
+    // sufficient space to materialize the 4B integer there (due to
+    // 8B alignment).
+    let b: InplaceBox<dyn MyTrait, 3> =
+        unsafe { InplaceBox::new_unchecked(4711_i32) };
+    assert_eq!(4711, b.method() & 0xff_ffff);
+}
+
+#[doc(hidden)]
+mod compile_tests {
+    #![allow(dead_code)]
+
+    /// The test ensures that the box must be sufficiently large:
+    /// ```compile_fail
+    /// use inplace_box::*;
+    /// trait Trait {}
+    /// impl Trait for i32 {}
+    /// let _b: InplaceBox<dyn Trait, 3> = InplaceBox::new(4711);
+    /// ```
+    fn fail_for_too_small_size() {}
+
+    /// Verification for `fail_for_too_small_size()` to check that it doesn't
+    /// fail with sufficient size:
+    /// ```
+    /// use inplace_box::*;
+    /// trait Trait {}
+    /// impl Trait for i32 {}
+    /// let _b: InplaceBox<dyn Trait, 4> = InplaceBox::new(4711);
+    /// ```
+    fn fail_for_too_small_size_validate() {}
+
+    /// The test ensures that the object must have sufficiently small alignment:
+    /// ```compile_fail
+    /// use inplace_box::*;
+    /// trait Trait {}
+    /// #[repr(align(16))]
+    /// struct AlignedStruct { b: bool}
+    /// impl Trait for AlignedStruct {}
+    /// let _b: InplaceBox<dyn Trait, 32> = InplaceBox::new(AlignedStruct { b: false });
+    /// ```
+    fn fail_for_too_large_alignment() {}
+
+    /// Verification for `fail_for_too_large_alignment()` to check that it
+    /// doesn't fail with sufficiently small alignment:
+    /// ```
+    /// use inplace_box::*;
+    /// trait Trait {}
+    /// #[repr(align(8))]
+    /// struct AlignedStruct { b: bool}
+    /// impl Trait for AlignedStruct {}
+    /// let _b: InplaceBox<dyn Trait, 32> = InplaceBox::new(AlignedStruct { b: false });
+    /// ```
+    fn fail_for_too_large_alignment_validate() {}
 }
