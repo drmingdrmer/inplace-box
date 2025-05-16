@@ -1,0 +1,21 @@
+[package]
+name = "inplace-box"
+version = "0.1.0"
+edition = "2021"
+readme = "README.md"
+authors = ["Zhang Yanpo <drdr.xp@gmail.com>"]
+publish = true
+categories = ["data-structures", "memory-management", "no-std"]
+description = "A stack-allocated container similar to Box but without heap allocation"
+documentation = "https://docs.rs/inplace-box"
+homepage = "https://github.com/drmingdrmer/inplace-box"
+keywords = ["box", "stack", "inline", "type-erased", "trait-object"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/drmingdrmer/inplace-box"
+rust-version = "1.70.0"
+
+[dependencies]
+
+[dev-dependencies]
+futures = { version = "0.3.30" }
+
