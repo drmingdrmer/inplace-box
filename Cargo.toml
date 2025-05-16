@@ -17,5 +17,4 @@ rust-version = "1.70.0"
 [dependencies]
 
 [dev-dependencies]
-futures = { version = "0.3.30" }
-
+static_assertions = "1"
