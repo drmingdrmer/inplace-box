@@ -3,7 +3,10 @@ name = "inplace-box"
 version = "0.1.0"
 edition = "2021"
 readme = "README.md"
-authors = ["Zhang Yanpo <drdr.xp@gmail.com>"]
+authors = [
+    "Schreter",
+    "Zhang Yanpo <drdr.xp@gmail.com>",
+]
 publish = true
 categories = ["data-structures", "memory-management", "no-std"]
 description = "A stack-allocated container similar to Box but without heap allocation"
