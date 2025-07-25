@@ -1,15 +1,19 @@
 #![allow(incomplete_features)]
 #![feature(
-    generic_const_exprs,
-    ptr_metadata,
-    unsize,
+    allocator_api,    // for Box::from_raw_in
     coerce_unsized,
     fn_traits,        // for forwarding `Fn` in `InplaceBox`
+    generic_const_exprs,
+    ptr_metadata,
     tuple_trait,      // for generalization of closure arguments
     unboxed_closures, // for forwarding `Fn` in `InplaceBox`
+    unsize,
 )]
 #![warn(clippy::all)]
 #![cfg_attr(not(test), no_std)]
+extern crate alloc;
+
+mod impl_fn_traits;
 
 use core::borrow::Borrow;
 use core::borrow::BorrowMut;
@@ -19,10 +23,8 @@ use core::fmt::Display;
 use core::fmt::Pointer;
 use core::future::Future;
 use core::marker::PhantomData;
-use core::marker::Tuple;
 use core::marker::Unsize;
 use core::mem;
-use core::mem::ManuallyDrop;
 use core::mem::MaybeUninit;
 use core::ops::Deref;
 use core::ops::DerefMut;
@@ -206,66 +208,6 @@ impl<T: ?Sized + Future, const SIZE: usize> Future for InplaceBox<T, SIZE> {
             let s = self.get_unchecked_mut();
             core::pin::Pin::new_unchecked(&mut **s).poll(cx)
         }
-    }
-}
-
-/// Helper trait to allow using `FnOnce` in the `InplaceBox`.
-///
-/// Instead of `InplaceBox<dyn FnOnce<Args> -> R, SIZE>`, we use
-/// `InplaceBox<dyn InplaceFnOnce<(Args,), Output = R>, SIZE>`.
-///
-/// This trait is automatically implemented for all `FnOnce` types.
-pub trait InplaceFnOnce<Args: Tuple>: FnOnce<Args> {
-    /// Call the function with given arguments and drop in-place.
-    ///
-    /// # Safety
-    ///
-    /// The object behind `self` is dropped in-place, so the caller must ensure
-    /// that `Self` is forgotten after the call.
-    unsafe fn call_once_impl(&mut self, args: Args) -> Self::Output;
-}
-
-impl<F: FnOnce<Args>, Args: Tuple> InplaceFnOnce<Args> for F {
-    unsafe fn call_once_impl(&mut self, args: Args) -> Self::Output {
-        let f = (self as *mut Self).read();
-        <F as FnOnce<Args>>::call_once(f, args)
-    }
-}
-
-impl<
-        Args: Tuple,
-        F: FnOnce<Args> + InplaceFnOnce<Args> + ?Sized,
-        const SIZE: usize,
-    > FnOnce<Args> for InplaceBox<F, SIZE>
-{
-    type Output = <F as FnOnce<Args>>::Output;
-
-    #[inline]
-    extern "rust-call" fn call_once(self, args: Args) -> Self::Output {
-        let mut tmp = ManuallyDrop::new(self); // drop in `call_once`
-        unsafe { (**tmp).call_once_impl(args) }
-    }
-}
-
-impl<
-        Args: Tuple,
-        F: InplaceFnOnce<Args> + FnMut<Args> + ?Sized,
-        const SIZE: usize,
-    > FnMut<Args> for InplaceBox<F, SIZE>
-{
-    extern "rust-call" fn call_mut(&mut self, args: Args) -> Self::Output {
-        <F as FnMut<Args>>::call_mut(self, args)
-    }
-}
-
-impl<
-        Args: Tuple,
-        F: InplaceFnOnce<Args> + Fn<Args> + ?Sized,
-        const SIZE: usize,
-    > Fn<Args> for InplaceBox<F, SIZE>
-{
-    extern "rust-call" fn call(&self, args: Args) -> Self::Output {
-        <F as Fn<Args>>::call(self, args)
     }
 }
 

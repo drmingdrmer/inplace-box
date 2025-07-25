@@ -8,7 +8,6 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use inplace_box::InplaceBox;
-use inplace_box::InplaceFnOnce;
 
 #[test]
 fn test_method() {
@@ -99,71 +98,6 @@ fn test_erase_type() {
     let result = arr.into_iter().map(|b| b.method()).collect::<Vec<_>>();
 
     assert_eq!(result, vec![1, 4]);
-}
-
-#[test]
-fn fn_once() {
-    let mut counter = 1;
-    let adder: InplaceBox<dyn InplaceFnOnce<(usize,), Output = usize>, 32> =
-        InplaceBox::new(|count| {
-            let res = counter;
-            counter = res + count;
-            res
-        });
-    // call the function once
-    let prev_value = adder(4);
-    // previous count was 1
-    assert_eq!(prev_value, 1);
-    // we added 4, so now it's 5
-    assert_eq!(5, counter);
-
-    // let prev_value2 = adder(1); -- impossible - `FnOnce` call consumes
-    // the box
-}
-
-#[test]
-fn fn_once_drop_or_call() {
-    struct Guard<'a>(&'a mut bool);
-    impl Drop for Guard<'_> {
-        fn drop(&mut self) {
-            *self.0 = true;
-        }
-    }
-
-    // first part - ensure that the closure is dropped, if the `FnOnce` is
-    // not called
-    let mut called = false;
-    let mut dropped = false;
-    {
-        let called = &mut called;
-        let guard = Guard(&mut dropped);
-        let b: InplaceBox<dyn FnOnce(), 32> = InplaceBox::new(move || {
-            *called = true;
-            std::mem::forget(guard);
-        });
-
-        drop(b); // drop w/o calling
-    }
-    assert!(!called);
-    assert!(dropped);
-
-    // second part - ensure that the closure is not dropped twice, the
-    // `FnOnce` call via `InplaceBox` drops it
-    called = false;
-    dropped = false;
-    {
-        let called = &mut called;
-        let guard = Guard(&mut dropped);
-        let b: InplaceBox<dyn InplaceFnOnce<(), Output = ()>, 32> =
-            InplaceBox::new(move || {
-                *called = true;
-                std::mem::forget(guard);
-            });
-
-        b(); // call it now
-    }
-    assert!(called);
-    assert!(!dropped);
 }
 
 #[test]
