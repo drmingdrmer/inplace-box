@@ -14,6 +14,7 @@
 extern crate alloc;
 
 mod impl_fn_traits;
+mod impl_new;
 
 use core::borrow::Borrow;
 use core::borrow::BorrowMut;
@@ -51,14 +52,7 @@ impl<T: ?Sized, const SIZE: usize> InplaceBox<T, SIZE> {
         "`InplaceBox` only works for `dyn Trait` types"
     );
 
-    /// Construct a new object in-place in this object.
-    ///
-    /// The type of the value must be convertible to `dyn T` and its size and
-    /// alignment less than or equal to that of the `InplaceBox` space for
-    /// the object.
-    ///
-    /// Type match, size and alignment are checked statically by the compiler.
-    pub fn new<'a, U: Sized + Unsize<T> + 'a>(value: U) -> Self {
+    pub(crate) fn new_impl<'a, U: Sized + Unsize<T> + 'a>(value: U) -> Self {
         struct AssertSize<ValueT: Sized, DestT: Sized>(
             PhantomData<(ValueT, DestT)>,
         );
