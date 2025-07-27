@@ -15,32 +15,12 @@ impl<T: ?Sized, const SIZE: usize> InplaceBox<T, SIZE> {
     }
 }
 
-/// Helper to move the value w/o conversion for `InplaceBox`.
-trait IsInPlaceBox<T: ?Sized, const SIZE: usize> {
-    fn move_out(self) -> InplaceBox<T, SIZE>;
-}
-
-impl<T: ?Sized, const SIZE: usize> IsInPlaceBox<T, SIZE>
-    for InplaceBox<T, SIZE>
-{
-    #[inline]
-    fn move_out(self) -> InplaceBox<T, SIZE> {
-        self
-    }
-}
-
-trait ConvertIntoInplaceBox<
-    'a,
-    T: ?Sized + 'a,
-    U: Sized + Unsize<T> + 'a,
-    const SIZE: usize,
->
-{
+trait ConvertIntoInplaceBox<'a, T: ?Sized + 'a, const SIZE: usize> {
     fn convert_into_inplace_box(self) -> InplaceBox<T, SIZE>;
 }
 
 impl<'a, T: ?Sized + 'a, U: Sized + Unsize<T> + 'a, const SIZE: usize>
-    ConvertIntoInplaceBox<'a, T, U, SIZE> for U
+    ConvertIntoInplaceBox<'a, T, SIZE> for U
 {
     #[inline]
     default fn convert_into_inplace_box(self) -> InplaceBox<T, SIZE> {
@@ -48,15 +28,25 @@ impl<'a, T: ?Sized + 'a, U: Sized + Unsize<T> + 'a, const SIZE: usize>
     }
 }
 
-impl<
-        'a,
-        T: ?Sized + 'a,
-        U: Sized + Unsize<T> + IsInPlaceBox<T, SIZE> + 'a,
-        const SIZE: usize,
-    > ConvertIntoInplaceBox<'a, T, U, SIZE> for U
+impl<'a, T: ?Sized + 'a, const SIZE: usize> ConvertIntoInplaceBox<'a, T, SIZE>
+    for InplaceBox<T, SIZE>
 {
     #[inline]
     fn convert_into_inplace_box(self) -> InplaceBox<T, SIZE> {
-        self.move_out()
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    trait Trait {}
+    impl<T> Trait for T {}
+
+    #[test]
+    fn test_new() {
+        let b1: InplaceBox<dyn Trait, 8> = InplaceBox::new(42u64);
+        let _b2: InplaceBox<dyn Trait, 8> = InplaceBox::new(b1);
     }
 }
