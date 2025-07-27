@@ -60,3 +60,24 @@ impl<
         self.move_out()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    trait Trait {}
+    impl Trait for u64 {}
+
+    #[test]
+    fn test_inplace_box_unsized() {
+        fn assert_unsized<U: ?Sized, T: Unsize<U>>(t: &T) {}
+        let b1: InplaceBox<dyn Trait, 8> = InplaceBox::new(42u64);
+        assert_unsized::<dyn Trait, _>(&b1);
+    }
+
+    #[test]
+    fn test_new() {
+        let b1: InplaceBox<dyn Trait, 8> = InplaceBox::new(42u64);
+        let b2: InplaceBox<dyn Trait, 8> = InplaceBox::new(b1);
+    }
+}
