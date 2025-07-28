@@ -8,6 +8,8 @@
     tuple_trait,      // for generalization of closure arguments
     unboxed_closures, // for forwarding `Fn` in `InplaceBox`
     unsize,
+    specialization,   // for specialization of `ConvertIntoInplaceBox`;
+                      // `min_specialization` does not apply for user defined trait.
 )]
 #![warn(clippy::all)]
 #![cfg_attr(not(test), no_std)]

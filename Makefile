@@ -4,10 +4,6 @@ check_all: lint fmt doc unused_dep typos
 
 test:
 	cargo test
-	cargo test --features bt
-	cargo test --features serde
-	cargo test --features single-term-leader
-	cargo test --manifest-path examples/raft-kv-memstore/Cargo.toml
 
 bench:
 	cargo bench --features bench
