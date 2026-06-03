@@ -20,6 +20,7 @@ mod impl_new;
 
 use core::borrow::Borrow;
 use core::borrow::BorrowMut;
+use core::cell::UnsafeCell;
 use core::fmt;
 use core::fmt::Debug;
 use core::fmt::Display;
@@ -32,6 +33,8 @@ use core::mem::MaybeUninit;
 use core::ops::Deref;
 use core::ops::DerefMut;
 use core::panic::AssertUnwindSafe;
+use core::panic::RefUnwindSafe;
+use core::panic::UnwindSafe;
 use core::ptr;
 use core::ptr::Pointee;
 
@@ -42,9 +45,31 @@ use mem::size_of;
 ///
 /// It stores data inline within a fixed-size buffer.
 pub struct InplaceBox<T: ?Sized, const SIZE: usize> {
-    storage: MaybeUninit<[u8; SIZE]>,
+    // `UnsafeCell` is required so that Miri's Stacked/Tree Borrows do not
+    // invalidate internal references (e.g. saved `&mut` across await points in
+    // a coroutine) when the outer `&mut InplaceBox` is retagged at poll time.
+    // Without it, the Unique retag of `&mut InplaceBox` covers the whole
+    // buffer and pops any borrow-stack entries derived from inside it,
+    // causing UB when the inner future holds a `&mut` reference across an
+    // await point.
+    storage: UnsafeCell<MaybeUninit<[u8; SIZE]>>,
     vtable: AssertUnwindSafe<<T as Pointee>::Metadata>,
     _phantom: PhantomData<T>,
+}
+
+// SAFETY: `InplaceBox<T>` owns `T` stored inline; sharing/sending follows `T`.
+unsafe impl<T: ?Sized + Send, const SIZE: usize> Send for InplaceBox<T, SIZE> {}
+unsafe impl<T: ?Sized + Sync, const SIZE: usize> Sync for InplaceBox<T, SIZE> {}
+
+// `UnsafeCell` opts out of the automatic `UnwindSafe`/`RefUnwindSafe` impls.
+// Re-add them conditioned on `T`, mirroring how `Box<T>` handles this.
+impl<T: ?Sized + UnwindSafe, const SIZE: usize> UnwindSafe
+    for InplaceBox<T, SIZE>
+{
+}
+impl<T: ?Sized + RefUnwindSafe, const SIZE: usize> RefUnwindSafe
+    for InplaceBox<T, SIZE>
+{
 }
 
 impl<T: ?Sized, const SIZE: usize> InplaceBox<T, SIZE> {
@@ -67,7 +92,7 @@ impl<T: ?Sized, const SIZE: usize> InplaceBox<T, SIZE> {
                 () = Self::ASSERT;
             }
         }
-        AssertSize::<U, MaybeUninit<[u8; SIZE]>>::check();
+        AssertSize::<U, UnsafeCell<MaybeUninit<[u8; SIZE]>>>::check();
         // SAFETY: Safe, since we just checked the size statically.
         unsafe { Self::new_unchecked(value) }
     }
@@ -112,24 +137,30 @@ impl<T: ?Sized, const SIZE: usize> InplaceBox<T, SIZE> {
 
         let value_ref: &T = &value;
         let vtable = AssertUnwindSafe(ptr::metadata(value_ref));
-        let mut res = Self {
-            storage: MaybeUninit::uninit(),
+        let res = Self {
+            storage: UnsafeCell::new(MaybeUninit::uninit()),
             vtable,
             _phantom: PhantomData,
         };
-        unsafe { res.storage.as_mut_ptr().cast::<U>().write(value) };
+        // SAFETY: `storage.get()` yields a raw `*mut MaybeUninit<[u8; SIZE]>`;
+        // we cast to `*mut U` and write the value. Size was checked above.
+        unsafe { (*res.storage.get()).as_mut_ptr().cast::<U>().write(value) };
         res
     }
 
     /// Get a pointer to the contained value
     unsafe fn as_ptr(&self) -> *const T {
-        let data_ptr = self.storage.as_ptr() as *const ();
+        // `UnsafeCell::get()` returns a raw pointer without creating a shared
+        // reference to the storage, preserving provenance correctly.
+        let data_ptr = self.storage.get() as *const ();
         ptr::from_raw_parts(data_ptr, *self.vtable)
     }
 
     /// Get a mutable pointer to the contained value
     unsafe fn as_mut_ptr(&mut self) -> *mut T {
-        let data_ptr = self.storage.as_mut_ptr() as *mut ();
+        // `UnsafeCell::get()` returns a raw pointer without requiring a `&mut`
+        // to the storage (which would create a Unique retag in Miri).
+        let data_ptr = self.storage.get() as *mut ();
         ptr::from_raw_parts_mut(data_ptr, *self.vtable)
     }
 }
@@ -198,11 +229,20 @@ impl<T: ?Sized + Future, const SIZE: usize> Future for InplaceBox<T, SIZE> {
         self: core::pin::Pin<&mut Self>,
         cx: &mut core::task::Context<'_>,
     ) -> core::task::Poll<Self::Output> {
-        // SAFETY: Safe, since we are just forwarding pinning to the inner
-        // member, which is also pinned by definition.
+        // SAFETY: We project the pin onto the inner `T` stored in the buffer.
+        // The inner future is pinned because `InplaceBox` is pinned and we
+        // never move the data out of the buffer.
+        //
+        // We go via `as_mut_ptr()` (`UnsafeCell::get()`) rather than through
+        // `DerefMut` to avoid creating a wide `&mut Self` reborrow. Combined
+        // with `UnsafeCell` on the storage field, this prevents Miri's
+        // Stacked/Tree Borrows from invalidating `&mut` references that the
+        // inner future saved across await points into its own buffer-resident
+        // state.
         unsafe {
             let s = self.get_unchecked_mut();
-            core::pin::Pin::new_unchecked(&mut **s).poll(cx)
+            let inner: *mut T = s.as_mut_ptr();
+            core::pin::Pin::new_unchecked(&mut *inner).poll(cx)
         }
     }
 }
