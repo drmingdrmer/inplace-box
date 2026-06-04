@@ -1,7 +1,6 @@
 #![allow(incomplete_features)]
 #![feature(
     allocator_api,    // for Box::from_raw_in
-    coerce_unsized,
     fn_traits,        // for forwarding `Fn` in `InplaceBox`
     generic_const_exprs,
     ptr_metadata,

@@ -7,10 +7,8 @@
 
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::task::Context;
 use std::task::Poll;
-use std::task::Wake;
 use std::task::Waker;
 
 use inplace_box::InplaceBox;
@@ -19,14 +17,12 @@ use inplace_box::InplaceBox;
 ///
 /// This is to prevent including heavy dependencies like `tokio` just for
 /// testing the Miri UB scenario.
+//
+// `Waker::noop()` (stable since 1.85) exceeds the crate's declared MSRV, but
+// test code is not part of the consumer-facing MSRV surface.
+#[allow(clippy::incompatible_msrv)]
 fn block_on<F: Future>(mut fut: F) -> F::Output {
-    struct NoopWake;
-    impl Wake for NoopWake {
-        fn wake(self: Arc<Self>) {}
-    }
-
-    let waker = Waker::from(Arc::new(NoopWake));
-    let mut cx = Context::from_waker(&waker);
+    let mut cx = Context::from_waker(Waker::noop());
     // SAFETY: `fut` is never moved after this point.
     let mut pinned = unsafe { Pin::new_unchecked(&mut fut) };
     loop {
