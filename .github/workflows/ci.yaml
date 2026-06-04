@@ -76,6 +76,23 @@ jobs:
       #       openraft/_log/
 
 
+  miri:
+    name: miri
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Miri
+        run: |
+          rustup toolchain install "$(cat rust-toolchain)" --component miri
+          cargo miri setup
+      - name: Test under Miri (Stacked Borrows, default)
+        run: cargo miri test
+      - name: Test under Miri (Tree Borrows)
+        run: cargo miri test
+        env:
+          MIRIFLAGS: -Zmiri-tree-borrows
+
+
   lint:
     name: lint
     runs-on: ubuntu-latest

@@ -1,9 +1,15 @@
-all: test check_all
+all: test miri check_all
 
 check_all: lint fmt doc unused_dep typos
 
 test:
 	cargo test
+
+miri:
+	# Test under Miri (undefined-behavior checker), with both borrow models.
+	# One-time setup: rustup component add miri
+	cargo miri test
+	MIRIFLAGS="-Zmiri-tree-borrows" cargo miri test
 
 bench:
 	cargo bench --features bench
@@ -31,11 +37,7 @@ guide:
 
 lint:
 	cargo fmt
-	cargo fmt --manifest-path examples/raft-kv-memstore/Cargo.toml
-	cargo fmt --manifest-path examples/raft-kv-rocksdb/Cargo.toml
 	cargo clippy --no-deps --all-targets -- -D warnings
-	cargo clippy --no-deps --manifest-path examples/raft-kv-memstore/Cargo.toml --all-targets -- -D warnings
-	cargo clippy --no-deps --manifest-path examples/raft-kv-rocksdb/Cargo.toml  --all-targets -- -D warnings
 	# Bug: clippy --all-targets reports false warning about unused dep in
 	# `[dev-dependencies]`:
 	# https://github.com/rust-lang/rust/issues/72686#issuecomment-635539688
@@ -47,10 +49,9 @@ unused_dep:
 
 typos:
 	# cargo install typos-cli
-	typos --write-changes openraft/ examples/raft-kv-memstore/
-	# typos
+	typos
 
 clean:
 	cargo clean
 
-.PHONY: test fmt lint clean doc guide
+.PHONY: test miri fmt lint clean doc guide
